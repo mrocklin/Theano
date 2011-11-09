@@ -4973,6 +4973,37 @@ def inverse_permutation(perm):
             perm,
             inverse=True)
 
+class RollOp(Op):
+    def __init__(self, shift, axis=0):
+        self.shift = shift
+        self.axis = axis
+
+    def __eq__(self, other):
+        return (type(self) == type(other) and self.axis == other.axis
+                and self.shift == other.shift)
+
+    def __hash__(self):
+        return hash((type(self), self.shift, self.axis))
+
+    def __str__(self):
+        return (self.__class__.__name__ +
+                ", axis: %d, shift: %d"%(self.axis, self.shift)
+
+    def make_node(self, x):
+        x = theano.tensor.as_tensor_variable(x)
+        return theano.Apply(self, [x], [x.type()])
+
+    def perform(self, node, inputs, output_storage):
+        x = inputs[0]
+        z = output_storage[0]
+        z[0] = numpy.roll(x, self.shift, self.axis)
+
+    def infer_shape(self, node, i0_shapes):
+        return i0_shapes
+
+    def grad(self, inputs, output_grads):
+        return [numpy.roll(output_grads[0], self.shift, self.axis)]
+
 #########################
 # Advanced indexing
 #########################
