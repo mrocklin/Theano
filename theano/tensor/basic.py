@@ -4987,7 +4987,7 @@ class RollOp(Op):
 
     def __str__(self):
         return (self.__class__.__name__ +
-                ", axis: %d, shift: %d"%(self.axis, self.shift)
+                ", axis: %d, shift: %d"%(self.axis, self.shift))
 
     def make_node(self, x):
         x = theano.tensor.as_tensor_variable(x)
@@ -5001,8 +5001,11 @@ class RollOp(Op):
     def infer_shape(self, node, i0_shapes):
         return i0_shapes
 
-    def grad(self, inputs, output_grads):
-        return [numpy.roll(output_grads[0], self.shift, self.axis)]
+    def grad(self, inputs, output_grads): # Does not work
+        return [numpy.roll(output_grads[0], -self.shift, self.axis)]
+
+    def R_op(self, inputs, eval_points):
+        return self.make_node(eval_points[0]).outputs
 
 #########################
 # Advanced indexing
