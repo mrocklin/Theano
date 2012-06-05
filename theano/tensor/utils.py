@@ -50,7 +50,7 @@ def shape_of_variables(env, input_shapes):
     Compute the numeric shape of all intermediate variables given input shapes
 
     Inputs:
-        env - the theano.Env in question
+        env - an Env or theano Function
         input_shapes - a dict mapping input to shape
 
     Outputs:
@@ -65,6 +65,9 @@ def shape_of_variables(env, input_shapes):
     >>> shape_of_variables(env, {x: (1024, 1024)})
     {y: (512, 1024), x: (1024, 1024)}
     """
+
+    if isinstance(env, theano.compile.Function):
+        env = env.maker.env
 
     if not hasattr(env, 'shape_feature'):
         env.extend(theano.tensor.opt.ShapeFeature())

@@ -68,3 +68,10 @@ def test_shape_of_variables_subtensor():
     env = theano.Env([x], [subx])
     shapes = shape_of_variables(env, {x: (10, 10)})
     assert shapes[subx] == (9, 10)
+
+def test_shape_of_variables_function():
+    x = theano.tensor.matrix('x')
+    subx = x[1:]
+    f = theano.function([x], subx)
+    shapes = shape_of_variables(f, {x: (10, 10)})
+    assert shapes[subx] == (9, 10)
