@@ -143,7 +143,7 @@ class Apply(utils.object2):
     """Alias for self.default_output()"""
 
     def __str__(self):
-        return op_as_string(self.inputs, self)
+        return op_as_string(self.inputs, self) + "->" + str(self.outputs)
 
     def __repr__(self):
         return str(self)
