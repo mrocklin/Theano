@@ -2534,3 +2534,37 @@ def profile_printer(fct_name, compile_time, fct_call_time, fct_call,
                                for i in node.inputs]),
                     print str([getattr(i, 'dtype', None)
                                for i in node.outputs])
+
+class GpuDelay(GpuOp):
+    """
+    Implement the transfer from cpu to the gpu.
+    """
+    def __init__(self, time):
+        self.time = time
+
+    def __eq__(self, other):
+        return type(self) == type(other) and self.time == other.time
+
+    def __hash__(self):
+        return hash((type(self), self.time))
+
+    def __str__(self):
+        return 'GpuDelay: %d'%self.time
+
+    def make_node(self, x):
+        if not isinstance(x.type, tensor.TensorType):
+            raise TypeError(x)
+        return Apply(self, [x], [CudaNdarrayType(broadcastable=x.broadcastable,
+                                                 dtype=x.dtype)()])
+
+    def perform(self, node, inp, out):
+        x, = inp
+        z, = out
+        z[0] = x
+
+    def infer_shape(self, node, xshp):
+        return xshp
+
+def delay(input, time):
+    return GPUDelay(time)(input)
+gpu_delay
