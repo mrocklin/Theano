@@ -87,9 +87,8 @@ class HostFromGpu(GpuOp):
         eventName = "HostFromGpu_"+str(inp)+"_event";
         return """
         cudaEvent_t = %(eventName)s;
-        cudaEventCreate(&%(eventName)s);
-
         %(out)s = (PyArrayObject *) CudaNdarray_CreateArrayObj(%(inp)s);
+        cudaEventCreate(&%(eventName)s);
         """ % locals()
 
     def c_code_cache_version(self):
@@ -188,13 +187,13 @@ class GpuFromHost(GpuOp):
         return """
         int err = 0;
         cudaEvent_t = %(eventName)s;
-        cudaEventCreate(&%(eventName)s);
         Py_XDECREF(%(out)s);
         %(out)s = (CudaNdarray*) CudaNdarray_New();
         if(!%(out)s){
             %(fail)s;
         }
         err = CudaNdarray_CopyFromArray(%(out)s, %(inp)s);
+        cudaEventCreate(&%(eventName)s);
         """ % locals()
 
     def c_code_cache_version(self):
