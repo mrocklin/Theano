@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 #include <cublas.h>
+#include <cuda.h>
 
 #ifdef _WIN32
 #ifdef _CUDA_NDARRAY_C
