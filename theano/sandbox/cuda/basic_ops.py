@@ -246,9 +246,6 @@ class GpuFromHostWait(GpuOp):
 def gpu_from_host(var):
     return GpuFromHostWait()(GpuFromHost()(var))
 
-gpu_from_host = GpuFromHost()
-
-
 class GpuElemwise(GpuOp):
     """
     Implement a generic elemwise on the gpu.
