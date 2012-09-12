@@ -130,6 +130,7 @@ class HostFromGpuWait(GpuOp):
         return """
         cudaEventSynchronize(%(eventName)s);
 
+        %(out)s = %(inp)s;
         if(!%(out)s){
             %(fail)s;
         }
@@ -235,6 +236,7 @@ class GpuFromHostWait(GpuOp):
 
         return """
         cudaEventSynchronize(%(eventName)s);
+        %(out)s = %(inp)s;
         if(err){
             %(fail)s;
         }
