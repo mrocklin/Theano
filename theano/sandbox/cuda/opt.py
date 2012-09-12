@@ -91,7 +91,7 @@ class InputToGpuOptimizer(Optimizer):
             # This happen frequently as we do 2 pass of the gpu optimizations
             if (len(input.clients) == 1 and
                 (input.clients[0][0] == 'output' or
-                 input.clients[0][0].op == gpu_from_host)):
+                 isinstance(input.clients[0][0].op, GpuFromHostWait))):
                 return
 
             try:
@@ -116,10 +116,11 @@ gpu_seqopt.register('InputToGpuOptimizer', InputToGpuOptimizer(),
 
 @local_optimizer([])
 def local_cut_gpu_host_gpu(node):
-    if tensor.opt.opt.check_chain(node, gpu_from_host, host_from_gpu):
-        return [node.inputs[0].owner.inputs[0]]
-    if tensor.opt.opt.check_chain(node, host_from_gpu, gpu_from_host):
-        return [node.inputs[0].owner.inputs[0]]
+
+    if tensor.opt.opt.check_chain(node, GpuFromHostWait(), GpuFromHost(), HostFromGpuWait(), HostFromGpu()):
+        return [node.inputs[0].owner.inputs[0].owner.inputs[0].owner.inputs[0]]
+    if tensor.opt.opt.check_chain(node, HostFromGpuWait(), HostFromGpu(), GpuFromHostWait(), GpuFromHost()):
+        return [node.inputs[0].owner.inputs[0].owner.inputs[0].owner.inputs[0]]
     return False
 gpu_cut_copies.register('cut_gpu_host_transfers', local_cut_gpu_host_gpu,
         'fast_run', 'inplace', 'gpu')
@@ -171,7 +172,7 @@ def local_gpu_elemwise_0(node):
     if (isinstance(node.op, tensor.Elemwise) and
         dtype_in_elemwise_supported(node.op)):
         if numpy.any([i.owner and
-                      isinstance(i.owner.op, HostFromGpu)
+                      isinstance(i.owner.op, HostFromGpuWait)
                       for i in node.inputs]):
             if numpy.all([o.type.dtype == 'float32' for o in node.outputs]):
                 # Don't set any inplace pattern.
@@ -223,7 +224,7 @@ def local_gpu_elemwise_1(node):
     """
     gpu_from_host(Elemwise)) -> GpuElemwise(gpu_from_host(...))
     """
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_i, = node.inputs
         if (host_i.owner and
             isinstance(host_i.owner.op, tensor.Elemwise) and
@@ -257,12 +258,12 @@ def local_gpu_dimshuffle_0(node):
     """
     if isinstance(node.op, tensor.DimShuffle):
         input, = node.inputs
-        if input.owner and isinstance(input.owner.op, HostFromGpu):
+        if input.owner and isinstance(input.owner.op, HostFromGpuWait):
             # move the add to a GpuAdd
             new_op = GpuDimShuffle(node.op.input_broadcastable,
                     node.op.new_order)
             return [host_from_gpu(new_op(gpu_from_host(input)))]
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and isinstance(host_input.owner.op,
                                            tensor.DimShuffle):
@@ -282,10 +283,10 @@ def local_gpu_specifyShape_0(node):
     """
     if isinstance(node.op, tensor.SpecifyShape):
         input = node.inputs[0]
-        if input.owner and isinstance(input.owner.op, HostFromGpu):
+        if input.owner and isinstance(input.owner.op, HostFromGpuWait):
             return [host_from_gpu(tensor.specify_shape(gpu_from_host(input),
                                                       *node.inputs[1:]))]
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and isinstance(host_input.owner.op,
                                            tensor.SpecifyShape):
@@ -312,7 +313,7 @@ def local_gpu_dot_to_dot22(node):
 
     # In case the got do input upcast, we much check that we can
     # make it run on the gpu.
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         if node.outputs[0].type.dtype != 'float32':
             return False
         host_input = node.inputs[0]
@@ -337,7 +338,7 @@ def local_gpu_dot_to_dot22(node):
     if node.op == tensor.basic.dot:
         if node.outputs[0].type.dtype != 'float32':
             return False
-        if numpy.any([(i.owner and i.owner.op == host_from_gpu)
+        if numpy.any([(i.owner and isinstance(i.owner.op, HostFromGpuWait))
                       for i in node.inputs]):
             x, y = node.inputs
             if _is_real_vector(x) and _is_real_matrix(y):
@@ -371,9 +372,9 @@ def local_gpu_lazy_ifelse(node):
         gpu_ifelse = theano.ifelse.IfElse(node.op.n_outs, gpu=True)
         outs_clients = reduce(list.__add__,
                               [out.clients for out in node.outputs])
-        if numpy.any([(i.owner and i.owner.op == host_from_gpu)
+        if numpy.any([(i.owner and isinstance(i.owner.op, HostFromGpuWait))
                       for i in node.inputs]) or numpy.any(
-                      [c != 'output' and c.op == gpu_from_host for c, idx
+                      [c != 'output' and isinstance(c.op, GpuFromHostWait) for c, idx
                        in outs_clients]):
 
             c = node.inputs[0]
@@ -388,7 +389,7 @@ def local_gpu_lazy_ifelse(node):
             return [host_from_gpu(out) for out in
                     gpu_ifelse.make_node(c, *outs).outputs]
 
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if (host_input.owner and
             isinstance(host_input.owner.op, theano.ifelse.IfElse) and
@@ -420,13 +421,13 @@ def local_gpu_dot22(node):
 
     dot(host_from_gpu) -> host_from_gpu(gpudot22)
     """
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and host_input.owner.op == tensor.blas._dot22:
             x, y = host_input.owner.inputs
             return [gpu_dot22(gpu_from_host(x), gpu_from_host(y))]
     if node.op == tensor.blas._dot22:
-        if numpy.any([(i.owner and i.owner.op == host_from_gpu)
+        if numpy.any([(i.owner and isinstance(i.owner.op, HostFromGpuWait))
                       for i in node.inputs]):
             x, y = node.inputs
             return [host_from_gpu(gpu_dot22(gpu_from_host(x),
@@ -442,7 +443,7 @@ def local_gpu_dot22scalar(node):
 
     dot(host_from_gpu) -> host_from_gpu(gpudot22scalar)
     """
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if (host_input.owner and
             host_input.owner.op == tensor.blas._dot22scalar):
@@ -450,7 +451,7 @@ def local_gpu_dot22scalar(node):
             return [gpu_dot22scalar(gpu_from_host(x), gpu_from_host(y),
                                     tensor.blas._as_scalar(scalar))]
     if node.op == tensor.blas._dot22scalar:
-        if numpy.any([(i.owner and i.owner.op == host_from_gpu)
+        if numpy.any([(i.owner and isinstance(i.owner.op, HostFromGpuWait))
                       for i in node.inputs]):
             x, y, scalar = node.inputs
             return [host_from_gpu(
@@ -474,7 +475,7 @@ def local_gpu_gemv(node):
             tensor.blas_c.CGemv(inplace=True): gpu_gemv_no_inplace,
             tensor.blas_c.CGemv(inplace=False): gpu_gemv_no_inplace,
             }
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and host_input.owner.op in gemvs:
             op = host_input.owner.op
@@ -487,9 +488,9 @@ def local_gpu_gemv(node):
                     b)]
     if node.op in gemvs:
         z, a, x, y, b = node.inputs
-        x_on_gpu = (x.owner and x.owner.op == host_from_gpu)
-        y_on_gpu = (y.owner and y.owner.op == host_from_gpu)
-        z_on_gpu = (z.owner and z.owner.op == host_from_gpu)
+        x_on_gpu = (x.owner and isinstance(x.owner.op, HostFromGpuWait))
+        y_on_gpu = (y.owner and isinstance(y.owner.op, HostFromGpuWait))
+        z_on_gpu = (z.owner and isinstance(z.owner.op, HostFromGpuWait))
         if x_on_gpu or y_on_gpu or z_on_gpu:
             return [host_from_gpu(
                 gemvs[node.op](
@@ -517,7 +518,7 @@ def local_gpu_ger(node):
             tensor.blas_scipy.ScipyGer(destructive=True): gpu_ger_no_inplace,
             tensor.blas_scipy.ScipyGer(destructive=False): gpu_ger_no_inplace,
             }
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and host_input.owner.op in gers:
             op = host_input.owner.op
@@ -530,9 +531,9 @@ def local_gpu_ger(node):
                     )]
     if node.op in gers:
         z, a, x, y = node.inputs
-        x_on_gpu = (x.owner and x.owner.op == host_from_gpu)
-        y_on_gpu = (y.owner and y.owner.op == host_from_gpu)
-        z_on_gpu = (z.owner and z.owner.op == host_from_gpu)
+        x_on_gpu = (x.owner and isinstance(x.owner.op, HostFromGpuWait))
+        y_on_gpu = (y.owner and isinstance(y.owner.op, HostFromGpuWait))
+        z_on_gpu = (z.owner and isinstance(z.owner.op, HostFromGpuWait))
         if x_on_gpu or y_on_gpu or z_on_gpu:
             return [host_from_gpu(
                 gers[node.op](
@@ -555,7 +556,7 @@ def local_gpu_gemm(node):
     gemms = {
             #tensor.blas.gemm_inplace: gpu_gemm_inplace,
             tensor.blas.gemm_no_inplace: gpu_gemm_no_inplace}
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and host_input.owner.op in gemms:
             op = host_input.owner.op
@@ -567,9 +568,9 @@ def local_gpu_gemm(node):
                               b)]
     if node.op in gemms:
         z, a, x, y, b = node.inputs
-        x_on_gpu = (x.owner and x.owner.op == host_from_gpu)
-        y_on_gpu = (y.owner and y.owner.op == host_from_gpu)
-        z_on_gpu = (z.owner and z.owner.op == host_from_gpu)
+        x_on_gpu = (x.owner and isinstance(x.owner.op, HostFromGpuWait))
+        y_on_gpu = (y.owner and isinstance(y.owner.op, HostFromGpuWait))
+        z_on_gpu = (z.owner and isinstance(z.owner.op, HostFromGpuWait))
         if x_on_gpu or y_on_gpu or z_on_gpu:
             return [host_from_gpu(gemms[node.op](gpu_from_host(z),
                                                  a,
@@ -585,7 +586,7 @@ def local_gpu_sum(node):
     if isinstance(node.op, tensor.elemwise.CAReduce):
         if node.op.scalar_op == scal.add:
             x, = node.inputs
-            if x.owner and x.owner.op == host_from_gpu:
+            if x.owner and isinstance(x.owner.op, HostFromGpuWait):
                 if node.op.axis is None:
                     reduce_mask = [1] * x.type.ndim
                 else:
@@ -652,7 +653,7 @@ def local_gpu_sum(node):
 @register_opt()
 @local_optimizer([])
 def local_gpu_reshape(node):
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and \
            isinstance(host_input.owner.op, tensor.Reshape):
@@ -669,7 +670,7 @@ def local_gpu_reshape(node):
             return [gpu_reshape]
     if isinstance(node.op, tensor.Reshape):
         x, shp = node.inputs
-        if x.owner and x.owner.op == host_from_gpu:
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait):
             gpu_x, = x.owner.inputs
             gpu_reshape = GpuReshape(node.op.ndim)(gpu_x, shp)
             if gpu_reshape.broadcastable != node.outputs[0].broadcastable:
@@ -686,7 +687,7 @@ def local_gpu_reshape(node):
 @register_opt()
 @local_optimizer([])
 def local_gpu_flatten(node):
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and \
            isinstance(host_input.owner.op, tensor.Flatten):
@@ -696,7 +697,7 @@ def local_gpu_flatten(node):
     if isinstance(node.op, tensor.Flatten):
         x, = node.inputs
         outdim = node.op.outdim
-        if x.owner and x.owner.op == host_from_gpu:
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait):
             gpu_x, = x.owner.inputs
             return [host_from_gpu(GpuFlatten(outdim)(gpu_x))]
     return False
@@ -705,7 +706,7 @@ def local_gpu_flatten(node):
 @register_opt()
 @local_optimizer([])
 def local_gpu_subtensor(node):
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and \
            isinstance(host_input.owner.op, tensor.Subtensor):
@@ -716,7 +717,7 @@ def local_gpu_subtensor(node):
     if isinstance(node.op, tensor.Subtensor):
         x = node.inputs[0]
         coords = node.inputs[1:]
-        if x.owner and x.owner.op == host_from_gpu and x.dtype == "float32":
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait) and x.dtype == "float32":
             gpu_x, = x.owner.inputs
             return [host_from_gpu(GpuSubtensor(
                 node.op.idx_list)(gpu_x, *coords))]
@@ -726,7 +727,7 @@ def local_gpu_subtensor(node):
 @register_opt()
 @local_optimizer([])
 def local_gpu_advanced_subtensor1(node):
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if host_input.owner and \
            host_input.owner.op.__class__ is tensor.AdvancedSubtensor1:
@@ -736,7 +737,7 @@ def local_gpu_advanced_subtensor1(node):
     if node.op.__class__ is tensor.AdvancedSubtensor1:
         x = node.inputs[0]
         coords = node.inputs[1:]
-        if x.owner and x.owner.op == host_from_gpu and x.dtype == "float32":
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait) and x.dtype == "float32":
             gpu_x, = x.owner.inputs
             return [host_from_gpu(GpuAdvancedSubtensor1()(gpu_x, *coords))]
     return False
@@ -745,7 +746,7 @@ def local_gpu_advanced_subtensor1(node):
 @register_opt()
 @local_optimizer([])
 def local_gpu_advanced_incsubtensor1(node):
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         # Should not execute for GpuAdvancedIncSubtensor1
         if host_input.owner and \
@@ -773,12 +774,12 @@ def local_gpu_advanced_incsubtensor1(node):
         x, y = node.inputs[0:2]
         coords = node.inputs[2:]
         go_gpu = False
-        if x.owner and x.owner.op == host_from_gpu:
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait):
             go_gpu = True
             gpu_x, = x.owner.inputs
         else:
             gpu_x = gpu_from_host(x)
-        if y.owner and y.owner.op == host_from_gpu:
+        if y.owner and isinstance(y.owner.op, HostFromGpuWait):
             go_gpu = True
             gpu_y, = y.owner.inputs
         else:
@@ -804,7 +805,7 @@ def local_gpu_advanced_incsubtensor1(node):
 @register_opt()
 @local_optimizer([])
 def local_gpu_incsubtensor(node):
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_output = node.inputs[0]
         if host_output.owner and \
            type(host_output.owner.op) == tensor.IncSubtensor:
@@ -825,12 +826,12 @@ def local_gpu_incsubtensor(node):
         assert isinstance(y.type, tensor.TensorType)
         coords = node.inputs[2:]
         go_gpu = False
-        if x.owner and x.owner.op == host_from_gpu:
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait):
             go_gpu = True
             gpu_x, = x.owner.inputs
         else:
             gpu_x = gpu_from_host(x)
-        if y.owner and y.owner.op == host_from_gpu:
+        if y.owner and isinstance(y.owner.op, HostFromGpuWait):
             go_gpu = True
             gpu_y, = y.owner.inputs
         else:
@@ -848,7 +849,7 @@ def local_gpu_incsubtensor(node):
 def local_gpu_shape(node):
     if isinstance(node.op, tensor.Shape):
         x, = node.inputs
-        if x.owner and x.owner.op == host_from_gpu:
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait):
             gpu_x, = x.owner.inputs
             return [gpu_shape(gpu_x)]
     return False
@@ -860,7 +861,7 @@ def local_gpu_rebroadcast(node):
     '''rebroadcast(host_from_gpu(x)) -> host_from_gpu(rebroadcast(x))'''
     if isinstance(node.op, tensor.Rebroadcast):
         x, = node.inputs
-        if (x.owner and x.owner.op == host_from_gpu):
+        if (x.owner and isinstance(x.owner.op, HostFromGpuWait)):
             gpu_x = x.owner.inputs[0]
             return [host_from_gpu(node.op(gpu_x))]
 
@@ -874,7 +875,7 @@ def gpu_print_wrapper(op, cnda):
 def local_gpu_print_op(node):
     if isinstance(node.op, tensor.printing.Print):
         x, = node.inputs
-        if x.owner and x.owner.op == host_from_gpu:
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait):
             gpu_x, = x.owner.inputs
             new_op = node.op.__class__(global_fn=gpu_print_wrapper)
             new_op.old_op = node.op
@@ -900,10 +901,10 @@ def local_gpu_tensordot(node):
             node.outputs[0].dtype == 'float32'):
         x, y = node.inputs
         if ((x.owner and
-                x.owner.op == host_from_gpu and
+                isinstance(x.owner.op, HostFromGpuWait) and
                 y.dtype == 'float32') or
             (y.owner and
-                y.owner.op == host_from_gpu and
+                isinstance(y.owner.op, HostFromGpuWait) and
                 x.dtype == 'float32')):
 
             axes = node.op.axes
@@ -924,7 +925,7 @@ import theano.tensor.nnet
 def local_gpu_crossentorpy_softmax_argmax_1hot_with_bias(node):
     if isinstance(node.op, tensor.nnet.CrossentropySoftmaxArgmax1HotWithBias):
         x, b, y = node.inputs
-        if x.owner and x.owner.op == host_from_gpu:
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait):
             gpu_x, = x.owner.inputs
             # if y is a cast to integers, we can go to the underlying
             # thing if we want, since this gpu op will cast to integers
@@ -954,7 +955,7 @@ def local_gpu_crossentorpy_softmax_argmax_1hot_with_bias(node):
 def local_gpu_crossentorpy_softmax_1hot_with_bias_dx(node):
     if isinstance(node.op, tensor.nnet.CrossentropySoftmax1HotWithBiasDx):
         dnll, sm, yidx = node.inputs
-        if sm.owner and sm.owner.op == host_from_gpu:
+        if sm.owner and isinstance(sm.owner.op, HostFromGpuWait):
             gpu_sm, = sm.owner.inputs
             gpu_dx = GpuCrossentropySoftmax1HotWithBiasDx()(
                 gpu_from_host(dnll),
@@ -969,7 +970,7 @@ def local_gpu_crossentorpy_softmax_1hot_with_bias_dx(node):
 def local_gpu_softmax(node):
     if isinstance(node.op, tensor.nnet.Softmax):
         x, = node.inputs
-        if x.owner and x.owner.op == host_from_gpu:
+        if x.owner and isinstance(x.owner.op, HostFromGpuWait):
             gpu_x, = x.owner.inputs
             gpu_sm = GpuSoftmax()(gpu_x)
             return [host_from_gpu(gpu_sm)]
@@ -981,8 +982,8 @@ def local_gpu_softmax(node):
 def local_gpu_softmax_with_bias(node):
     if isinstance(node.op, tensor.nnet.SoftmaxWithBias):
         x, b = node.inputs
-        x_on_gpu = x.owner and x.owner.op == host_from_gpu
-        b_on_gpu = b.owner and b.owner.op == host_from_gpu
+        x_on_gpu = x.owner and isinstance(x.owner.op, HostFromGpuWait)
+        b_on_gpu = b.owner and isinstance(b.owner.op, HostFromGpuWait)
         if x_on_gpu or b_on_gpu:
             gpu_sm = GpuSoftmaxWithBias()(gpu_from_host(x), gpu_from_host(b))
             return [host_from_gpu(gpu_sm)]
@@ -1026,7 +1027,7 @@ def local_gpu_conv(node):
             ret.flops = op.flops
         return ret
 
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         #gpu_from_host(conv) -> gpu_conv(gpu_from_host)
         host_input = node.inputs[0]
         if host_input.owner and isinstance(host_input.owner.op, conv.ConvOp):
@@ -1044,8 +1045,8 @@ def local_gpu_conv(node):
     if isinstance(node.op, conv.ConvOp):
         #conv(host_from_gpu) -> host_from_gpu(gpu_conv)
         img, kern = node.inputs
-        img_on_gpu = (img.owner and img.owner.op == host_from_gpu)
-        kern_on_gpu = (kern.owner and kern.owner.op == host_from_gpu)
+        img_on_gpu = (img.owner and isinstance(img.owner.op, HostFromGpuWait))
+        kern_on_gpu = (kern.owner and isinstance(kern.owner.op, HostFromGpuWait))
         if img_on_gpu or kern_on_gpu:
             gpu_conv = GpuConvOp_from_ConvOp(node.op)
             if gpu_conv is None:
@@ -1065,7 +1066,7 @@ import theano.tensor.signal.downsample as downsample
 def local_gpu_downsample_factor_max(node):
     if isinstance(node.op, downsample.DownsampleFactorMax):
         x, = node.inputs
-        if (x.owner and x.owner.op == host_from_gpu):
+        if (x.owner and isinstance(x.owner.op, HostFromGpuWait)):
             gpu_ds = GpuDownsampleFactorMax(node.op.ds, node.op.ignore_border)
             return [host_from_gpu(gpu_ds(x.owner.inputs[0]))]
 
@@ -1075,7 +1076,7 @@ def local_gpu_downsample_factor_max(node):
 def local_gpu_downsample_factor_max_grad(node):
     if isinstance(node.op, downsample.DownsampleFactorMaxGrad):
         x, z, gz = node.inputs
-        if (x.owner and x.owner.op == host_from_gpu):
+        if (x.owner and isinstance(x.owner.op, HostFromGpuWait)):
             gpu_ds_grad = GpuDownsampleFactorMaxGrad(node.op.ds,
                                                      node.op.ignore_border)
             return [host_from_gpu(gpu_ds_grad(x.owner.inputs[0],
@@ -1127,7 +1128,7 @@ def local_gpu_join(node):
 
         #print "OPT: axis_and_tensors=", axis_and_tensors
 
-        matches = [(not t.owner is None and t.owner.op == host_from_gpu) or
+        matches = [(not t.owner is None and isinstance(t.owner.op, HostFromGpuWait)) or
                    isinstance(t, gof.Constant) for t in axis_and_tensors[1:]]
         #print "OPT: matches =", matches
 
@@ -1298,9 +1299,9 @@ def local_gpualloc(node):
     replace = False
     if node.op == tensor.alloc:
         if node.inputs[0].owner and \
-           node.inputs[0].owner.op == host_from_gpu:
+           isinstance(node.inputs[0].owner.op, HostFromGpuWait):
             replace = True
-        elif all([c != 'output' and c.op == gpu_from_host
+        elif all([c != 'output' and isinstance(c.op, GpuFromHostWait)
                 for c, idx in node.outputs[0].clients]):
             # if all clients are on gpu
             replace = True
@@ -1409,7 +1410,7 @@ def gpuScanOptimization(node):
     """
 
     #gpu_from_host(scan) -> GPUscan(gpu_from_host)
-    if node.op == gpu_from_host:
+    if isinstance(node.op, GpuFromHostWait):
         host_input = node.inputs[0]
         if (host_input.owner and
             isinstance(host_input.owner.op, scan_op.Scan) and
@@ -1470,7 +1471,7 @@ def gpuScanOptimization(node):
     #scan(host_from_gpu) -> host_from_gpu(GPUscan)
     if (type(node.op) == scan_op.Scan
         and not node.op.info['gpu']):
-        if numpy.any([(i.owner and i.owner.op == host_from_gpu)
+        if numpy.any([(i.owner and isinstance(i.owner.op, HostFromGpuWait))
                       for i in node.inputs]):
 
             thescan = node.op
