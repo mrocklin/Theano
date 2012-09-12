@@ -84,11 +84,12 @@ class HostFromGpu(GpuOp):
         inp = inputs[0]
         out = outputs[0]
         fail = sub['fail']
-        eventName = "HostFromGpu_"+str(inp)+"_event";
+        eventName = "HostFromGpu_%s_event"%out
         return """
-        cudaEvent_t = %(eventName)s;
-        %(out)s = (PyArrayObject *) CudaNdarray_CreateArrayObj(%(inp)s);
+        cudaEvent_t %(eventName)s;
         cudaEventCreate(&%(eventName)s);
+        %(out)s = (PyArrayObject *) CudaNdarray_CreateArrayObj(%(inp)s);
+        cudaEventRecord(%(eventName)s, 0);
         """ % locals()
 
     def c_code_cache_version(self):
@@ -125,9 +126,9 @@ class HostFromGpuWait(GpuOp):
         inp = inputs[0]
         out = outputs[0]
         fail = sub['fail']
-        eventName = "HostFromGpu_"+str(inp)+"_event";
+        eventName = "HostFromGpu_%s_event"%inp
         return """
-        cudaEventSynchronize(&%(eventName)s);
+        cudaEventSynchronize(%(eventName)s);
 
         if(!%(out)s){
             %(fail)s;
@@ -138,7 +139,6 @@ class HostFromGpuWait(GpuOp):
         return (1,)
 def host_from_gpu(var):
     return HostFromGpuWait()(HostFromGpu()(var))
-
 
 class GpuFromHost(GpuOp):
     """
@@ -183,17 +183,18 @@ class GpuFromHost(GpuOp):
         inp = inputs[0]
         out = outputs[0]
         fail = sub['fail']
-        eventName = "GpuFromHost_"+str(inp)+"_event";
+        eventName = "GpuFromHost_%s_event"%out
         return """
         int err = 0;
-        cudaEvent_t = %(eventName)s;
+        cudaEvent_t %(eventName)s;
+        cudaEventCreate(&%(eventName)s);
         Py_XDECREF(%(out)s);
         %(out)s = (CudaNdarray*) CudaNdarray_New();
         if(!%(out)s){
             %(fail)s;
         }
         err = CudaNdarray_CopyFromArray(%(out)s, %(inp)s);
-        cudaEventCreate(&%(eventName)s);
+        cudaEventRecord(%(eventName)s);
         """ % locals()
 
     def c_code_cache_version(self):
@@ -230,10 +231,10 @@ class GpuFromHostWait(GpuOp):
         inp = inputs[0]
         out = outputs[0]
         fail = sub['fail']
-        eventName = "GpuFromHost_"+str(inp)+"_event";
+        eventName = "GpuFromHost_%s_event"%inp
 
         return """
-        cudaEventSynchronize(&%(eventName)s);
+        cudaEventSynchronize(%(eventName)s);
         if(err){
             %(fail)s;
         }
