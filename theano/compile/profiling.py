@@ -680,7 +680,7 @@ if 0: # old code still to be ported from ProfileMode
             gpu = []
             trans = []
             for so in sotimes:
-                if so[2].__name__ in ["HostFromGpu", "GpuFromHost"]:
+                if so[2].__name__ in ["HostFromGpu", "GpuFromHost", "GpuFromHostWait", "HostFromGpuWait"]:
                     trans.append(so)
                 elif so[2].__name__.startswith("Gpu"):
                     gpu.append(so)
