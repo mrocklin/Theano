@@ -158,6 +158,8 @@ class MPIRecvWait(Op):
     def infer_shape(self, node, shapes):
         return [shapes[1]]
 
+    view_map = {0: [1]}
+
 class MPISend(Op):
     """
     An operation to asynchronously Send an array to a remote host using MPI
