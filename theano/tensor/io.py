@@ -74,6 +74,8 @@ try:
 except:
     mpi_enabled = False
 
+debug = True
+
 
 class MPIRecv(Op):
     """
@@ -149,6 +151,8 @@ class MPIRecvWait(Op):
         request = inp[0]
         data    = inp[1]
 
+        if debug:
+            print "Rank %d Waiting on tag: %d"%(comm.Get_rank(), self.tag)
         request.wait()
 
         out[0][0] = data
@@ -192,6 +196,9 @@ class MPISend(Op):
         data = inp[0]
 
         request = comm.Isend(data, self.dest, self.tag)
+        if debug:
+            print "Rank %d sent tag: %d to Rank %d"%(
+                    comm.Get_rank(), self.tag, self.dest)
 
         out[0][0] = request
 
