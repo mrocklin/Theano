@@ -1,5 +1,8 @@
-from logpy import var, isvar, run, eq
+from logpy import var, isvar, run, eq, fact
+from logpy.assoccomm import eq_assoccomm as eqac
+from logpy.assoccomm import commutative, associative
 import itertools as it
+
 
 def deconstruct(x, variables=()):
     if x in variables:
@@ -21,6 +24,14 @@ def construct(tup):
 def rule(in_pattern, out_pattern, variables):
     decon = lambda x: deconstruct(x, variables)
     return lambda expr: it.imap(construct,
-            run(None, decon(out_pattern), eq(decon(in_pattern), decon(expr))))
+            run(None,
+                deconstruct(out_pattern, variables),
+                eqac(deconstruct(in_pattern, variables), deconstruct(expr))))
 
+from theano.tensor import Elemwise
+from theano.scalar.basic import mul, add
 
+fact(commutative, Elemwise(mul))
+fact(commutative, Elemwise(add))
+fact(associative, Elemwise(mul))
+fact(associative, Elemwise(add))
