@@ -5,13 +5,14 @@ from theano.tensor import sin, cos, tan
 
 from logpy import isvar, var
 
+
+# Apparently x + y != x + y.  Is there a better way to do this?
 def streq(a, b):
+    """ equality test using debugprint """
     return debugprint(a, file='str') == debugprint(b, file='str')
 
 x = T.matrix('x')
 y = T.matrix('y')
-
-one = (x+1).owner.inputs[1]  # is there a better way of getting a theano 1?
 
 def test_construct_deconstruct():
     expr = 2*x + y

@@ -22,7 +22,6 @@ def construct(tup):
         return tup[0](*map(construct, tup[1:]))
 
 def rule(in_pattern, out_pattern, variables):
-    decon = lambda x: deconstruct(x, variables)
     return lambda expr: it.imap(construct,
             run(None,
                 deconstruct(out_pattern, variables),
